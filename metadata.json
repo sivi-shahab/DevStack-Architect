@@ -1,0 +1,5 @@
+{
+  "name": "DevStack AI Architect",
+  "description": "A smart requirement analyzer that helps developers choose tech stacks and generates architectural insights using Gemini models.",
+  "requestFramePermissions": []
+}
