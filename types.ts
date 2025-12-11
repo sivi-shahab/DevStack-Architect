@@ -14,12 +14,14 @@ export interface ChatMessage {
 
 export interface TechStack {
   language: string;
-  framework: string;
+  frontendFramework: string;
+  backendFramework: string;
 }
 
 export interface CodeScaffold {
   backend: string;
   frontend: string;
+  readme: string;
 }
 
 export enum AnalysisStatus {

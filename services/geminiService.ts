@@ -10,6 +10,77 @@ const FAST_MODEL = 'gemini-flash-lite-latest';
 const SMART_MODEL = 'gemini-3-pro-preview';
 
 /**
+ * Parses unstructured text or binary data (PDF) into structured features using Gemini.
+ */
+export const parseDocumentWithGemini = async (
+  fileData: string, 
+  mimeType: string
+): Promise<ParsedFeature[]> => {
+  const prompt = `
+    Analyze the provided document content.
+    Extract key functional requirements and architectural features.
+    
+    Return a list of features. For each feature, provide:
+    - type: The category (e.g., 'Core', 'Security', 'UI', 'Database', 'API')
+    - title: A short concise title (e.g., 'User Authentication')
+    - icon: A valid Lucide React icon name (PascalCase, e.g., 'ShieldCheck', 'Database', 'User', 'Globe')
+    - content: A detailed description of the requirement.
+    
+    If the content is empty or unreadable, return an empty list.
+  `;
+
+  // Prepare contents based on mimeType
+  let contents;
+  if (mimeType === 'application/pdf') {
+    contents = {
+      role: 'user',
+      parts: [
+        { text: prompt },
+        { inlineData: { mimeType: mimeType, data: fileData } }
+      ]
+    };
+  } else {
+    // Text based (including extracted text from DOCX)
+    contents = {
+        role: 'user',
+        parts: [{ text: `${prompt}\n\nDocument Content:\n${fileData}` }]
+    };
+  }
+
+  try {
+    const response: GenerateContentResponse = await ai.models.generateContent({
+      model: FAST_MODEL, // Flash Lite is good for extraction
+      contents: contents,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              type: { type: Type.STRING },
+              title: { type: Type.STRING },
+              icon: { type: Type.STRING },
+              content: { type: Type.STRING },
+              raw: { type: Type.STRING, description: "Leave empty or original text snippet" }
+            },
+            required: ["type", "title", "icon", "content"]
+          }
+        }
+      }
+    });
+
+    if (response.text) {
+      return JSON.parse(response.text) as ParsedFeature[];
+    }
+    return [];
+  } catch (error) {
+    console.error("Gemini parsing failed:", error);
+    throw new Error("Failed to parse document with AI.");
+  }
+};
+
+/**
  * Analyzes the requirements using the Fast Lite model to generate a tech summary.
  */
 export const analyzeRequirementsFast = async (
@@ -24,8 +95,9 @@ export const analyzeRequirementsFast = async (
       Analyze the following project requirements and the selected tech stack.
       
       Selected Tech Stack:
-      - Language: ${stack.language}
-      - Framework: ${stack.framework}
+      - Preferred Language: ${stack.language}
+      - Frontend Framework: ${stack.frontendFramework}
+      - Backend Framework: ${stack.backendFramework}
       
       Requirements:
       ${featureSummaries}
@@ -57,21 +129,34 @@ export const generateCodeScaffold = async (
   
   const prompt = `
     You are a Principal Software Engineer at a top-tier tech company.
-    Generate the core boilerplate code and folder structure for a project with the following constraints.
+    Generate a **PRODUCTION-READY** codebase for a project with the following constraints.
 
     Tech Stack:
-    - Language: ${stack.language}
-    - Framework: ${stack.framework}
+    - Language Preference: ${stack.language}
+    - Frontend Framework: ${stack.frontendFramework}
+    - Backend Framework: ${stack.backendFramework}
 
     Requirements:
     ${featureContext}
 
     Instructions:
-    1. Create a high-quality, scalable folder structure.
-    2. Provide the main entry point code (e.g., App.tsx, server.js/main.go).
-    3. Provide one example of a core logic file based on the requirements (e.g., a Controller, Service, or Component).
-    4. Ensure the code follows industry best practices (Clean Code, SOLID, etc.).
-    5. Return the result as Markdown code blocks.
+    1. **Backend**: Generate the complete folder structure and KEY files.
+       - MUST include 'package.json' (or requirements.txt/go.mod) with all necessary dependencies.
+       - MUST include the main entry file (e.g., main.ts, server.js, app.py).
+       - MUST include at least one Feature Module (Controller + Service + DTO/Entity) implementing a key requirement from the list.
+    
+    2. **Frontend**: Generate the complete folder structure and KEY files.
+       - MUST include 'package.json' with dependencies.
+       - MUST include 'App.tsx' (or equivalent).
+       - MUST include API integration code (fetching data from the backend).
+    
+    3. **README.md**: Generate a comprehensive README.md.
+       - Step-by-step instructions on how to install dependencies and RUN both backend and frontend.
+       - List of env variables needed.
+    
+    4. **Formatting**: Use Markdown code blocks for every file. Precede code blocks with the file path (e.g., '## backend/src/app.module.ts').
+
+    Return the result strictly as a JSON object with 'backend', 'frontend', and 'readme' strings containing the Markdown.
   `;
 
   const response: GenerateContentResponse = await ai.models.generateContent({
@@ -84,14 +169,18 @@ export const generateCodeScaffold = async (
         properties: {
           backend: {
             type: Type.STRING,
-            description: "Markdown string containing the backend file structure and core code.",
+            description: "Markdown string containing the backend file structure and COMPLETE source code for key files.",
           },
           frontend: {
             type: Type.STRING,
-            description: "Markdown string containing the frontend file structure and core components.",
+            description: "Markdown string containing the frontend file structure and COMPLETE source code for components.",
+          },
+          readme: {
+            type: Type.STRING,
+            description: "Markdown string containing the README.md with run instructions.",
           },
         },
-        required: ["backend", "frontend"],
+        required: ["backend", "frontend", "readme"],
       },
     },
   });
@@ -103,8 +192,11 @@ export const generateCodeScaffold = async (
     return JSON.parse(text) as CodeScaffold;
   } catch (e) {
     console.error("Failed to parse JSON", e);
-    // Fallback if model returns raw text for some reason
-    return { backend: "Error parsing backend code.", frontend: "Error parsing frontend code." };
+    return { 
+      backend: "Error parsing backend code.", 
+      frontend: "Error parsing frontend code.",
+      readme: "Error parsing readme."
+    };
   }
 };
 
@@ -121,15 +213,20 @@ export const createProjectChat = (
     You are an expert AI Developer Assistant helping a user build a specific application.
     
     Context:
-    The user is building an app with the following Tech Stack:
+    The user is building an app with:
+    - Frontend: ${stack.frontendFramework}
+    - Backend: ${stack.backendFramework}
     - Language: ${stack.language}
-    - Framework: ${stack.framework}
     
-    The user has imported the following feature requirements:
+    Requirements:
     ${featureContext}
     
-    Your goal is to answer technical questions, provide code snippets, and help architecture the solution based strictly on these constraints.
-    Be helpful, concise, and accurate.
+    Your goal is to answer technical questions, provide code snippets, and help architecture the solution.
+    
+    If the user has generated code and asks for changes:
+    1. Explain how to modify the code to achieve their goal.
+    2. Provide exact code snippets they can copy to update their project.
+    3. Be specific about which files need to change.
   `;
 
   return ai.chats.create({

@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { UploadCloud, Code2, Zap, Layout, ChevronRight, CheckCircle2, FileCode2, Loader2 } from 'lucide-react';
+import { UploadCloud, Code2, Zap, Layout, ChevronRight, CheckCircle2, FileCode2, Loader2, FileText, AlertCircle, Server, Monitor, MessageSquare } from 'lucide-react';
+// @ts-ignore
+import mammoth from 'mammoth';
 import { ParsedFeature, TechStack, AnalysisStatus, CodeScaffold } from './types';
 import FeatureCard from './components/FeatureCard';
 import ChatInterface from './components/ChatInterface';
 import CodePreview from './components/CodePreview';
-import { analyzeRequirementsFast, createProjectChat, generateCodeScaffold } from './services/geminiService';
+import { analyzeRequirementsFast, createProjectChat, generateCodeScaffold, parseDocumentWithGemini } from './services/geminiService';
 import { Chat } from '@google/genai';
 
-// Simple parser for the format provided in the prompt
-const parseContent = (text: string): ParsedFeature[] => {
+// Simple parser for the legacy text format
+const parseLegacyContent = (text: string): ParsedFeature[] => {
   const parts = text.split('--- START OF FILE text/plain ---');
   const features: ParsedFeature[] = [];
 
@@ -29,7 +31,7 @@ const parseContent = (text: string): ParsedFeature[] => {
         features.push({
           type: typeMatch ? typeMatch[1] : 'unknown',
           title: titleMatch[1],
-          icon: iconMatch ? iconMatch[1] : 'file', // Convert snake_case to CamelCase icon name if needed in component
+          icon: iconMatch ? iconMatch[1] : 'file',
           content: body,
           raw: part
         });
@@ -41,33 +43,108 @@ const parseContent = (text: string): ParsedFeature[] => {
 };
 
 const LANGUAGES = ['TypeScript', 'JavaScript', 'Python', 'Go', 'Rust', 'Java'];
-const FRAMEWORKS = ['React', 'Vue', 'Next.js', 'NestJS', 'Django', 'FastAPI', 'Spring Boot'];
+const FRONTEND_FRAMEWORKS = ['React', 'Next.js', 'Vue', 'Nuxt', 'Svelte', 'Angular'];
+const BACKEND_FRAMEWORKS = ['NestJS', 'Express', 'Django', 'FastAPI', 'Spring Boot', 'Gin (Go)', 'Actix (Rust)'];
 
 const App: React.FC = () => {
   const [features, setFeatures] = useState<ParsedFeature[]>([]);
-  const [techStack, setTechStack] = useState<TechStack>({ language: '', framework: '' });
+  const [techStack, setTechStack] = useState<TechStack>({ language: '', frontendFramework: '', backendFramework: '' });
   const [analysis, setAnalysis] = useState<string>('');
   const [status, setStatus] = useState<AnalysisStatus>(AnalysisStatus.IDLE);
   const [chatSession, setChatSession] = useState<Chat | null>(null);
   const [codeScaffold, setCodeScaffold] = useState<CodeScaffold | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'chat' | 'code'>('chat');
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const text = event.target?.result as string;
-        const parsed = parseContent(text);
-        setFeatures(parsed);
-      };
-      reader.readAsText(file);
+    if (!file) return;
+
+    setIsParsing(true);
+    setParseError(null);
+    setFeatures([]);
+    setStatus(AnalysisStatus.IDLE);
+    setAnalysis('');
+    setChatSession(null);
+    setCodeScaffold(null);
+    setViewMode('chat');
+
+    try {
+      if (file.type === 'application/pdf') {
+        // Handle PDF
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const base64String = (event.target?.result as string).split(',')[1];
+            const parsed = await parseDocumentWithGemini(base64String, 'application/pdf');
+            setFeatures(parsed);
+          } catch (err) {
+            console.error(err);
+            setParseError("Failed to analyze PDF content.");
+          } finally {
+            setIsParsing(false);
+          }
+        };
+        reader.readAsDataURL(file);
+      } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+        // Handle DOCX
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const arrayBuffer = event.target?.result as ArrayBuffer;
+            const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+            const text = result.value;
+            // Send extracted text to Gemini for structuring
+            const parsed = await parseDocumentWithGemini(text, 'text/plain');
+            setFeatures(parsed);
+          } catch (err) {
+            console.error(err);
+            setParseError("Failed to analyze Word document.");
+          } finally {
+            setIsParsing(false);
+          }
+        };
+        reader.readAsArrayBuffer(file);
+      } else {
+        // Handle Text/MD (Legacy or Unstructured)
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const text = event.target?.result as string;
+            // Try legacy parser first
+            let parsed = parseLegacyContent(text);
+            
+            // If legacy parser found nothing, treat as unstructured text and ask Gemini
+            if (parsed.length === 0 && text.trim().length > 0) {
+              parsed = await parseDocumentWithGemini(text, 'text/plain');
+            }
+            
+            if (parsed.length === 0) {
+               setParseError("No features detected in the file.");
+            } else {
+               setFeatures(parsed);
+            }
+          } catch (err) {
+             console.error(err);
+             setParseError("Failed to parse text file.");
+          } finally {
+            setIsParsing(false);
+          }
+        };
+        reader.readAsText(file);
+      }
+    } catch (error) {
+      console.error(error);
+      setParseError("An unexpected error occurred during upload.");
+      setIsParsing(false);
     }
   };
 
   // Effect to trigger analysis when tech stack and features are ready
   useEffect(() => {
     const runAnalysis = async () => {
-      if (features.length > 0 && techStack.language && techStack.framework) {
+      if (features.length > 0 && techStack.language && techStack.frontendFramework && techStack.backendFramework && !isParsing) {
         setStatus(AnalysisStatus.ANALYZING);
         try {
           // 1. Fast Analysis with Flash Lite
@@ -87,7 +164,7 @@ const App: React.FC = () => {
     };
 
     runAnalysis();
-  }, [features, techStack]);
+  }, [features, techStack, isParsing]);
 
   const handleGenerateCode = async () => {
     if (status !== AnalysisStatus.COMPLETE && status !== AnalysisStatus.GENERATING_CODE) return;
@@ -96,6 +173,7 @@ const App: React.FC = () => {
     try {
       const scaffold = await generateCodeScaffold(features, techStack);
       setCodeScaffold(scaffold);
+      setViewMode('code');
       setStatus(AnalysisStatus.COMPLETE);
     } catch (error) {
       console.error("Code generation failed", error);
@@ -114,7 +192,7 @@ const App: React.FC = () => {
               DevStack Architect
             </h1>
             <p className="text-slate-400 mt-2">
-              Import requirements, select your stack, and build with AI.
+              Import requirements, select your full stack, and build with AI.
             </p>
           </div>
           <div className="mt-4 md:mt-0 flex items-center space-x-4">
@@ -138,22 +216,33 @@ const App: React.FC = () => {
               <div className="relative border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:border-blue-500 hover:bg-slate-800/50 transition-all cursor-pointer group">
                 <input 
                   type="file" 
-                  accept=".txt,.md"
+                  accept=".txt,.md,.pdf,.docx"
                   onChange={handleFileUpload}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  disabled={isParsing}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
                 />
                 <div className="flex flex-col items-center">
-                  <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
-                    <Layout className="text-slate-400 group-hover:text-blue-400" />
-                  </div>
+                  {isParsing ? (
+                    <Loader2 className="w-12 h-12 text-blue-500 animate-spin mb-3" />
+                  ) : (
+                    <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+                      <Layout className="text-slate-400 group-hover:text-blue-400" />
+                    </div>
+                  )}
                   <p className="text-sm font-medium text-slate-300">
-                    Drop requirement file here
+                    {isParsing ? "Analyzing Document..." : "Drop PDF, DOCX, or Text file here"}
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
-                    Supports text formats with frontmatter
+                    AI will automatically extract requirements
                   </p>
                 </div>
               </div>
+              {parseError && (
+                <div className="mt-4 p-3 bg-red-900/20 border border-red-800 rounded-lg flex items-center text-sm text-red-400">
+                  <AlertCircle size={16} className="mr-2" />
+                  {parseError}
+                </div>
+              )}
             </section>
 
             {/* 2. Tech Stack Selector */}
@@ -162,9 +251,9 @@ const App: React.FC = () => {
                 <Code2 className="mr-2 text-green-500" /> Select Tech Stack
               </h2>
               
-              <div className="space-y-4">
+              <div className="space-y-6">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Language</label>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Preferred Language</label>
                   <div className="grid grid-cols-3 gap-2">
                     {LANGUAGES.map(lang => (
                       <button
@@ -183,14 +272,37 @@ const App: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Framework</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {FRAMEWORKS.map(fw => (
+                  <label className="flex items-center text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                    <Monitor size={14} className="mr-1"/> Frontend Framework
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {FRONTEND_FRAMEWORKS.map(fw => (
                       <button
                         key={fw}
-                        onClick={() => setTechStack(prev => ({ ...prev, framework: fw }))}
+                        onClick={() => setTechStack(prev => ({ ...prev, frontendFramework: fw }))}
                         className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                          techStack.framework === fw 
+                          techStack.frontendFramework === fw 
+                            ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/50' 
+                            : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                        }`}
+                      >
+                        {fw}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="flex items-center text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                    <Server size={14} className="mr-1"/> Backend Framework
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {BACKEND_FRAMEWORKS.map(fw => (
+                      <button
+                        key={fw}
+                        onClick={() => setTechStack(prev => ({ ...prev, backendFramework: fw }))}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                          techStack.backendFramework === fw 
                             ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' 
                             : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
                         }`}
@@ -241,7 +353,7 @@ const App: React.FC = () => {
                      </div>
                    ) : (
                      <div className="flex flex-col items-center justify-center h-full text-slate-600">
-                        <p>Select a stack and import features to generate analysis.</p>
+                        <p>Select your Language, Frontend, and Backend stack.</p>
                      </div>
                    )}
                 </div>
@@ -256,7 +368,7 @@ const App: React.FC = () => {
                       className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center transition-colors shadow-lg shadow-blue-900/20"
                      >
                        <FileCode2 size={16} className="mr-2" />
-                       Generate Project Code
+                       Generate Full Codebase
                      </button>
                    </div>
                 )}
@@ -264,34 +376,53 @@ const App: React.FC = () => {
                    <div className="mt-4 flex items-center justify-end">
                       <div className="flex items-center text-blue-400 text-sm font-medium animate-pulse">
                         <Loader2 size={16} className="mr-2 animate-spin" />
-                        Generating Boilerplate...
+                        Generating Production-Ready Code...
                       </div>
                    </div>
                 )}
               </div>
             </div>
 
-            {/* Code Preview or Chat Bot */}
-            {codeScaffold ? (
-              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div className="flex items-center justify-between mb-2 px-1">
-                   <h3 className="text-lg font-semibold text-slate-200 flex items-center">
-                     <FileCode2 className="mr-2 text-purple-400" /> Project Scaffold
-                   </h3>
-                   <button 
-                    onClick={() => setCodeScaffold(null)}
-                    className="text-xs text-slate-500 hover:text-white underline"
-                   >
-                     Back to Chat
-                   </button>
-                </div>
-                <CodePreview scaffold={codeScaffold} />
-              </div>
-            ) : (
-              <div>
-                <ChatInterface chatSession={chatSession} />
+            {/* View Switcher Controls (Only visible when code is generated) */}
+            {codeScaffold && (
+              <div className="flex space-x-1 mb-2 bg-slate-900/50 p-1 rounded-lg border border-slate-800 w-fit">
+                <button
+                  onClick={() => setViewMode('code')}
+                  className={`flex items-center px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                    viewMode === 'code' 
+                      ? 'bg-blue-600 text-white shadow-lg' 
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <FileCode2 size={16} className="mr-2" />
+                  Code Preview
+                </button>
+                <button
+                  onClick={() => setViewMode('chat')}
+                  className={`flex items-center px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                    viewMode === 'chat' 
+                      ? 'bg-blue-600 text-white shadow-lg' 
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <MessageSquare size={16} className="mr-2" />
+                  Ask Architect
+                </button>
               </div>
             )}
+
+            {/* Code Preview or Chat Bot */}
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+              {/* Show Chat if no code yet, OR if viewMode is chat */}
+              {(!codeScaffold || viewMode === 'chat') && (
+                 <ChatInterface chatSession={chatSession} />
+              )}
+              
+              {/* Show Code only if code exists AND viewMode is code */}
+              {codeScaffold && viewMode === 'code' && (
+                 <CodePreview scaffold={codeScaffold} />
+              )}
+            </div>
 
           </div>
         </div>

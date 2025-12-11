@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Server, Monitor, Copy, Check } from 'lucide-react';
+import { Server, Monitor, Copy, Check, BookOpen } from 'lucide-react';
 import { CodeScaffold } from '../types';
 
 interface CodePreviewProps {
@@ -7,11 +7,15 @@ interface CodePreviewProps {
 }
 
 const CodePreview: React.FC<CodePreviewProps> = ({ scaffold }) => {
-  const [activeTab, setActiveTab] = useState<'backend' | 'frontend'>('backend');
+  const [activeTab, setActiveTab] = useState<'backend' | 'frontend' | 'readme'>('backend');
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    const text = activeTab === 'backend' ? scaffold.backend : scaffold.frontend;
+    let text = '';
+    if (activeTab === 'backend') text = scaffold.backend;
+    else if (activeTab === 'frontend') text = scaffold.frontend;
+    else text = scaffold.readme;
+
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -44,6 +48,17 @@ const CodePreview: React.FC<CodePreviewProps> = ({ scaffold }) => {
             <Monitor size={16} />
             <span>Frontend</span>
           </button>
+          <button
+            onClick={() => setActiveTab('readme')}
+            className={`flex items-center space-x-2 px-4 py-3 rounded-t-lg text-sm font-medium transition-colors ${
+              activeTab === 'readme'
+                ? 'bg-slate-900 text-yellow-400 border-x border-t border-slate-700 relative top-[1px]'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
+            }`}
+          >
+            <BookOpen size={16} />
+            <span>README.md</span>
+          </button>
         </div>
         <div className="pr-2 pb-2">
           <button
@@ -59,7 +74,9 @@ const CodePreview: React.FC<CodePreviewProps> = ({ scaffold }) => {
       {/* Code Content */}
       <div className="flex-1 overflow-auto bg-[#0d1117] p-6">
         <pre className="font-mono text-sm text-slate-300 whitespace-pre-wrap">
-          {activeTab === 'backend' ? scaffold.backend : scaffold.frontend}
+          {activeTab === 'backend' && scaffold.backend}
+          {activeTab === 'frontend' && scaffold.frontend}
+          {activeTab === 'readme' && scaffold.readme}
         </pre>
       </div>
     </div>
