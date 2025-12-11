@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { UploadCloud, Code2, Zap, Layout, ChevronRight, CheckCircle2, FileCode2, Loader2, FileText, AlertCircle, Server, Monitor, MessageSquare, Play } from 'lucide-react';
 // @ts-ignore
-import mammoth from 'mammoth';
+import * as mammoth from 'mammoth';
 import { ParsedFeature, TechStack, AnalysisStatus, CodeScaffold } from './types';
 import FeatureCard from './components/FeatureCard';
 import ChatInterface from './components/ChatInterface';
@@ -57,6 +57,9 @@ const App: React.FC = () => {
   const [isParsing, setIsParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'chat' | 'code' | 'demo'>('chat');
+  
+  // Ref to reset input
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -71,31 +74,55 @@ const App: React.FC = () => {
     setCodeScaffold(null);
     setViewMode('chat');
 
+    const fileName = file.name.toLowerCase();
+    const fileType = file.type;
+
     try {
-      if (file.type === 'application/pdf') {
+      if (fileType === 'application/pdf' || fileName.endsWith('.pdf')) {
         // Handle PDF
         const reader = new FileReader();
         reader.onload = async (event) => {
           try {
-            const base64String = (event.target?.result as string).split(',')[1];
+            const result = event.target?.result as string;
+            // Robust check for data URL format
+            const base64String = result.includes(',') ? result.split(',')[1] : result;
             const parsed = await parseDocumentWithGemini(base64String, 'application/pdf');
+            if (parsed.length === 0) throw new Error("No features extracted from PDF");
             setFeatures(parsed);
           } catch (err) {
             console.error(err);
-            setParseError("Failed to analyze PDF content.");
+            setParseError("Failed to analyze PDF content. Ensure the file is text-readable.");
           } finally {
             setIsParsing(false);
           }
         };
+        reader.onerror = () => {
+           setParseError("Error reading file.");
+           setIsParsing(false);
+        };
         reader.readAsDataURL(file);
-      } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+
+      } else if (
+        fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || 
+        fileName.endsWith('.docx')
+      ) {
         // Handle DOCX
         const reader = new FileReader();
         reader.onload = async (event) => {
           try {
             const arrayBuffer = event.target?.result as ArrayBuffer;
-            const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+            // Handle both default and named export possibilities for mammoth
+            const extractRawText = mammoth.extractRawText || (mammoth as any).default?.extractRawText;
+            
+            if (!extractRawText) throw new Error("Docx parser not loaded correctly.");
+            
+            const result = await extractRawText({ arrayBuffer: arrayBuffer });
             const text = result.value;
+            
+            if (!text.trim()) {
+                throw new Error("Document appears empty.");
+            }
+
             // Send extracted text to Gemini for structuring
             const parsed = await parseDocumentWithGemini(text, 'text/plain');
             setFeatures(parsed);
@@ -106,9 +133,14 @@ const App: React.FC = () => {
             setIsParsing(false);
           }
         };
+        reader.onerror = () => {
+           setParseError("Error reading file.");
+           setIsParsing(false);
+        };
         reader.readAsArrayBuffer(file);
+
       } else {
-        // Handle Text/MD (Legacy or Unstructured)
+        // Handle Text/MD (Legacy or Unstructured) - Default Fallback
         const reader = new FileReader();
         reader.onload = async (event) => {
           try {
@@ -122,7 +154,7 @@ const App: React.FC = () => {
             }
             
             if (parsed.length === 0) {
-               setParseError("No features detected in the file.");
+               setParseError("No features detected in the file. Is it empty?");
             } else {
                setFeatures(parsed);
             }
@@ -133,12 +165,21 @@ const App: React.FC = () => {
             setIsParsing(false);
           }
         };
+        reader.onerror = () => {
+           setParseError("Error reading file.");
+           setIsParsing(false);
+        };
         reader.readAsText(file);
       }
     } catch (error) {
       console.error(error);
       setParseError("An unexpected error occurred during upload.");
       setIsParsing(false);
+    } finally {
+        // Reset input value to allow re-uploading the same file
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
     }
   };
 
@@ -216,6 +257,7 @@ const App: React.FC = () => {
               </h2>
               <div className="relative border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:border-blue-500 hover:bg-slate-800/50 transition-all cursor-pointer group">
                 <input 
+                  ref={fileInputRef}
                   type="file" 
                   accept=".txt,.md,.pdf,.docx"
                   onChange={handleFileUpload}

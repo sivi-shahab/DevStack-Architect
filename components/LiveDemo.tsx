@@ -9,58 +9,86 @@ const LiveDemo: React.FC<LiveDemoProps> = ({ html }) => {
   
   // Inject safety script to prevent navigation and fix "refused to connect"
   const safeHtml = useMemo(() => {
+    // Add base tag to force links to stay in iframe (or be caught by script)
+    const baseTag = '<base target="_self" />';
+    
     const safetyScript = `
       <script>
-        document.addEventListener('DOMContentLoaded', () => {
-          // Intercept all clicks to prevent navigation
-          document.addEventListener('click', (e) => {
-            const link = e.target.closest('a');
-            if (link) {
-              const href = link.getAttribute('href');
-              // Allow anchor links that just jump to section or are javascript:void
-              if (!href || href === '#' || href.startsWith('javascript:')) {
-                return;
-              }
-              // Prevent actual navigation
-              e.preventDefault();
-              console.log('External navigation prevented for demo');
+        // Override window.location to prevent programmatic navigation
+        const originalLocation = window.location;
+        
+        // Prevent all clicks on links unless they are internal anchors
+        window.addEventListener('click', (e) => {
+          const target = e.target.closest('a');
+          if (target) {
+            const href = target.getAttribute('href');
+            // Check if it's a hash link
+            if (href && href.startsWith('#')) {
+              // Allow hash links
+              return;
             }
-          }, true);
-
-          // Intercept form submissions to prevent reload
-          document.addEventListener('submit', (e) => {
-            e.preventDefault();
-            console.log('Form submission prevented for demo');
+            if (href && href.startsWith('javascript:')) {
+               return;
+            }
             
-            // Mock success visual
-            const form = e.target;
-            const btn = form.querySelector('button[type="submit"]');
-            if(btn) {
-               const originalText = btn.innerText;
-               const originalColor = btn.style.backgroundColor;
-               
-               btn.innerText = 'Processing...';
-               btn.disabled = true;
-               
-               setTimeout(() => {
-                 btn.innerText = '✅ Saved (Demo)';
-                 btn.disabled = false;
-                 
-                 setTimeout(() => {
-                    btn.innerText = originalText;
-                 }, 2000);
-               }, 800);
-            }
-          }, true);
-        });
+            // Block everything else
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Optional: Visual Feedback
+            const toast = document.createElement('div');
+            toast.style.position = 'fixed';
+            toast.style.bottom = '20px';
+            toast.style.right = '20px';
+            toast.style.background = '#334155';
+            toast.style.color = '#fff';
+            toast.style.padding = '10px 20px';
+            toast.style.borderRadius = '8px';
+            toast.style.fontSize = '12px';
+            toast.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)';
+            toast.style.zIndex = '9999';
+            toast.innerText = 'Navigation Blocked (Demo Mode)';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+          }
+        }, true);
+
+        // Prevent form submission everywhere
+        window.addEventListener('submit', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          // Find the submit button and simulate loading
+          const submitBtn = e.target.querySelector('button[type="submit"], input[type="submit"]');
+          if (submitBtn) {
+            const oldText = submitBtn.innerText || submitBtn.value;
+            submitBtn.disabled = true;
+            submitBtn.innerText = 'Processing...';
+            setTimeout(() => {
+              submitBtn.innerText = '✅ Success (Demo)';
+              submitBtn.disabled = false;
+              setTimeout(() => {
+                 submitBtn.innerText = oldText;
+              }, 2000);
+            }, 1000);
+          }
+        }, true);
       </script>
     `;
     
-    // Insert script before </head> if possible, otherwise prepend
-    if (html.includes('</head>')) {
-        return html.replace('</head>', `${safetyScript}</head>`);
+    let processedHtml = html;
+    
+    // Inject base tag in head
+    if (processedHtml.includes('<head>')) {
+        processedHtml = processedHtml.replace('<head>', `<head>${baseTag}`);
+    } else {
+        processedHtml = `${baseTag}${processedHtml}`;
     }
-    return safetyScript + html;
+
+    // Inject script before </head> if possible, otherwise prepend
+    if (processedHtml.includes('</head>')) {
+        return processedHtml.replace('</head>', `${safetyScript}</head>`);
+    }
+    return safetyScript + processedHtml;
   }, [html]);
 
   return (

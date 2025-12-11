@@ -71,7 +71,20 @@ export const parseDocumentWithGemini = async (
     });
 
     if (response.text) {
-      return JSON.parse(response.text) as ParsedFeature[];
+      try {
+        // CLEANUP: Strip any Markdown code block syntax if the model includes it despite responseMimeType
+        let jsonStr = response.text.trim();
+        if (jsonStr.startsWith("```json")) {
+           jsonStr = jsonStr.replace(/^```json/, "").replace(/```$/, "");
+        } else if (jsonStr.startsWith("```")) {
+           jsonStr = jsonStr.replace(/^```/, "").replace(/```$/, "");
+        }
+        return JSON.parse(jsonStr) as ParsedFeature[];
+      } catch (jsonError) {
+        console.error("JSON Parse Error:", jsonError);
+        console.log("Raw Response:", response.text);
+        return [];
+      }
     }
     return [];
   } catch (error) {
