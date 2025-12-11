@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { UploadCloud, Code2, Zap, Layout, ChevronRight, CheckCircle2, FileCode2, Loader2, FileText, AlertCircle, Server, Monitor, MessageSquare } from 'lucide-react';
+import { UploadCloud, Code2, Zap, Layout, ChevronRight, CheckCircle2, FileCode2, Loader2, FileText, AlertCircle, Server, Monitor, MessageSquare, Play } from 'lucide-react';
 // @ts-ignore
 import mammoth from 'mammoth';
 import { ParsedFeature, TechStack, AnalysisStatus, CodeScaffold } from './types';
 import FeatureCard from './components/FeatureCard';
 import ChatInterface from './components/ChatInterface';
 import CodePreview from './components/CodePreview';
+import LiveDemo from './components/LiveDemo';
 import { analyzeRequirementsFast, createProjectChat, generateCodeScaffold, parseDocumentWithGemini } from './services/geminiService';
 import { Chat } from '@google/genai';
 
@@ -55,7 +56,7 @@ const App: React.FC = () => {
   const [codeScaffold, setCodeScaffold] = useState<CodeScaffold | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'chat' | 'code'>('chat');
+  const [viewMode, setViewMode] = useState<'chat' | 'code' | 'demo'>('chat');
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -173,7 +174,7 @@ const App: React.FC = () => {
     try {
       const scaffold = await generateCodeScaffold(features, techStack);
       setCodeScaffold(scaffold);
-      setViewMode('code');
+      setViewMode('demo'); // Switch to demo immediately
       setStatus(AnalysisStatus.COMPLETE);
     } catch (error) {
       console.error("Code generation failed", error);
@@ -376,7 +377,7 @@ const App: React.FC = () => {
                    <div className="mt-4 flex items-center justify-end">
                       <div className="flex items-center text-blue-400 text-sm font-medium animate-pulse">
                         <Loader2 size={16} className="mr-2 animate-spin" />
-                        Generating Production-Ready Code...
+                        Generating Production-Ready Code & Demo...
                       </div>
                    </div>
                 )}
@@ -386,6 +387,17 @@ const App: React.FC = () => {
             {/* View Switcher Controls (Only visible when code is generated) */}
             {codeScaffold && (
               <div className="flex space-x-1 mb-2 bg-slate-900/50 p-1 rounded-lg border border-slate-800 w-fit">
+                <button
+                  onClick={() => setViewMode('demo')}
+                  className={`flex items-center px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                    viewMode === 'demo' 
+                      ? 'bg-blue-600 text-white shadow-lg' 
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <Play size={16} className="mr-2" />
+                  Live Demo
+                </button>
                 <button
                   onClick={() => setViewMode('code')}
                   className={`flex items-center px-4 py-2 rounded-md text-sm font-medium transition-all ${
@@ -411,7 +423,7 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {/* Code Preview or Chat Bot */}
+            {/* Code Preview, Live Demo or Chat Bot */}
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
               {/* Show Chat if no code yet, OR if viewMode is chat */}
               {(!codeScaffold || viewMode === 'chat') && (
@@ -421,6 +433,11 @@ const App: React.FC = () => {
               {/* Show Code only if code exists AND viewMode is code */}
               {codeScaffold && viewMode === 'code' && (
                  <CodePreview scaffold={codeScaffold} />
+              )}
+
+              {/* Show Demo only if code exists AND viewMode is demo */}
+              {codeScaffold && viewMode === 'demo' && (
+                 <LiveDemo html={codeScaffold.demoHtml} />
               )}
             </div>
 

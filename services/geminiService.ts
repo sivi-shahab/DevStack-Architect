@@ -1,5 +1,5 @@
 import { GoogleGenAI, GenerateContentResponse, Chat, Type } from "@google/genai";
-import { TechStack, ParsedFeature, CodeScaffold } from "../types";
+import { TechStack, ParsedFeature, CodeScaffold, ProjectFile } from "../types";
 
 // Initialize Gemini Client
 // IMPORTANT: Accessing process.env.API_KEY directly as per instructions
@@ -126,37 +126,39 @@ export const generateCodeScaffold = async (
   stack: TechStack
 ): Promise<CodeScaffold> => {
   const featureContext = features.map(f => `- ${f.title}: ${f.content}`).join('\n');
+  const featureTitles = features.map(f => f.title).join(', ');
   
   const prompt = `
     You are a Principal Software Engineer at a top-tier tech company.
-    Generate a **PRODUCTION-READY** codebase for a project with the following constraints.
+    Generate a **PRODUCTION-READY** codebase structure and a **LIVE DEMO PROTOTYPE**.
+    
+    The code must be SEPARATED into individual files to follow industry standards (Clean Architecture / SOLID).
 
     Tech Stack:
-    - Language Preference: ${stack.language}
-    - Frontend Framework: ${stack.frontendFramework}
-    - Backend Framework: ${stack.backendFramework}
+    - Language: ${stack.language}
+    - Frontend: ${stack.frontendFramework}
+    - Backend: ${stack.backendFramework}
 
     Requirements:
     ${featureContext}
 
     Instructions:
-    1. **Backend**: Generate the complete folder structure and KEY files.
-       - MUST include 'package.json' (or requirements.txt/go.mod) with all necessary dependencies.
-       - MUST include the main entry file (e.g., main.ts, server.js, app.py).
-       - MUST include at least one Feature Module (Controller + Service + DTO/Entity) implementing a key requirement from the list.
-    
-    2. **Frontend**: Generate the complete folder structure and KEY files.
-       - MUST include 'package.json' with dependencies.
-       - MUST include 'App.tsx' (or equivalent).
-       - MUST include API integration code (fetching data from the backend).
-    
-    3. **README.md**: Generate a comprehensive README.md.
-       - Step-by-step instructions on how to install dependencies and RUN both backend and frontend.
-       - List of env variables needed.
-    
-    4. **Formatting**: Use Markdown code blocks for every file. Precede code blocks with the file path (e.g., '## backend/src/app.module.ts').
+    1. Generate a list of critical files needed for this project.
+    2. **Backend**: Include entry points, configuration, and at least one full feature module (Controller, Service, DTO).
+       - Example path: \`backend/src/modules/auth/auth.controller.ts\`
+    3. **Frontend**: Include entry points, routing setup, and key components.
+       - Example path: \`frontend/src/components/Dashboard.tsx\`
+    4. **Config**: Include package.json (or equivalent) for both.
+    5. **README**: Generate a detailed README explaining how to run the project.
+    6. **DEMO PROTOTYPE**: Generate a SINGLE self-contained \`index.html\` file.
+       - Use Tailwind CSS via CDN: <script src="https://cdn.tailwindcss.com"></script>
+       - **LAYOUT**: Create a professional dashboard layout with a **Sidebar Navigation** that lists the key features: ${featureTitles}.
+       - **INTERACTIVITY**: Clicking a sidebar item MUST switch the main content area to show a MOCK UI for that specific feature (use vanilla JS to hide/show sections, do not reload page).
+       - **SAFETY**: Do NOT allow any page reloads or external links. All buttons and forms must use \`event.preventDefault()\` and show visual feedback (e.g., 'Simulation: Data Saved') instead of submitting.
+       - **CONTENT**: For each feature, generate a realistic-looking UI form, table, or visualization relevant to the requirement.
+       - It must be ready to run in a browser iframe (no build step).
 
-    Return the result strictly as a JSON object with 'backend', 'frontend', and 'readme' strings containing the Markdown.
+    Return the response as a structured JSON object.
   `;
 
   const response: GenerateContentResponse = await ai.models.generateContent({
@@ -167,20 +169,29 @@ export const generateCodeScaffold = async (
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          backend: {
-            type: Type.STRING,
-            description: "Markdown string containing the backend file structure and COMPLETE source code for key files.",
-          },
-          frontend: {
-            type: Type.STRING,
-            description: "Markdown string containing the frontend file structure and COMPLETE source code for components.",
+          files: {
+            type: Type.ARRAY,
+            description: "List of all project files.",
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                path: { type: Type.STRING, description: "Full file path including folder (e.g., backend/src/main.ts)" },
+                content: { type: Type.STRING, description: "The complete code content of the file" },
+                language: { type: Type.STRING, description: "The language for syntax highlighting (e.g., typescript, python, json)" }
+              },
+              required: ["path", "content", "language"]
+            }
           },
           readme: {
             type: Type.STRING,
             description: "Markdown string containing the README.md with run instructions.",
           },
+          demoHtml: {
+            type: Type.STRING,
+            description: "A complete, self-contained HTML5 string with embedded CSS/JS that visually demonstrates the app.",
+          },
         },
-        required: ["backend", "frontend", "readme"],
+        required: ["files", "readme", "demoHtml"],
       },
     },
   });
@@ -193,9 +204,9 @@ export const generateCodeScaffold = async (
   } catch (e) {
     console.error("Failed to parse JSON", e);
     return { 
-      backend: "Error parsing backend code.", 
-      frontend: "Error parsing frontend code.",
-      readme: "Error parsing readme."
+      files: [], 
+      readme: "Error parsing generation result.",
+      demoHtml: "<div style='padding:20px;color:red'>Error generating demo.</div>"
     };
   }
 };

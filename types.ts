@@ -18,10 +18,16 @@ export interface TechStack {
   backendFramework: string;
 }
 
+export interface ProjectFile {
+  path: string;
+  content: string;
+  language: string;
+}
+
 export interface CodeScaffold {
-  backend: string;
-  frontend: string;
+  files: ProjectFile[];
   readme: string;
+  demoHtml: string;
 }
 
 export enum AnalysisStatus {
